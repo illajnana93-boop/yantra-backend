@@ -77,10 +77,10 @@ async def ask_guruji(request: AskRequest, background_tasks: BackgroundTasks, req
         
         print(f"🚀 Returning response to client")
 
-        full_audio_url = str(req.base_url) + f"static/audio/{audio_filename}"
+        relative_audio_url = f"/static/audio/{audio_filename}"
         return AskResponse(
             answer_text=answer_text,
-            audio_url=full_audio_url,
+            audio_url=relative_audio_url,
             avatar="guruji"
         )
 
@@ -106,8 +106,8 @@ async def talk_to_guruji(request: TalkRequest, background_tasks: BackgroundTasks
         await communicate.save(audio_path)
         print(f"✅ [talk-to-guruji] Fast audio saved: {audio_filename}")
         
-        full_audio_url = str(req.base_url) + f"static/audio/{audio_filename}"
-        return TalkResponse(reply=reply, audio_url=full_audio_url)
+        relative_audio_url = f"/static/audio/{audio_filename}"
+        return TalkResponse(reply=reply, audio_url=relative_audio_url)
     except Exception as e:
         print(f"ERROR in talk-to-guruji: {e}")
         raise HTTPException(status_code=500, detail=str(e))
