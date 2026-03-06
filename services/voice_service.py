@@ -22,8 +22,8 @@ class VoiceService:
         self.processed_dir = os.path.join(self.base_dir, 'static', 'audio', 'processed')
         os.makedirs(self.processed_dir, exist_ok=True)
         
-        # Model State
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Model State (Init as CPU, upgrade to CUDA if torch is found later)
+        self.device = "cpu"
         self.converter = None
         self.target_se = None
         self.source_se = None # Optimized: Cache source SE too
@@ -39,6 +39,9 @@ class VoiceService:
             if torch is None:
                 import torch as _torch
                 torch = _torch
+                # Update device once torch is loaded
+                if torch.cuda.is_available():
+                    self.device = "cuda"
             if se_extractor is None:
                 from openvoice import se_extractor as _se
                 se_extractor = _se
