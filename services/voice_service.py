@@ -1,10 +1,12 @@
 import os
 import asyncio
 import edge_tts
-import torch
 import shutil
-from openvoice import se_extractor
-from openvoice.api import ToneColorConverter
+
+# Lazy imports for heavy ML libraries to allow lean production builds
+torch = None
+se_extractor = None
+ToneColorConverter = None
 
 class VoiceService:
     def __init__(self):
@@ -31,9 +33,21 @@ class VoiceService:
 
     def _initialize_models(self):
         """Loads the local OpenVoice converter and extracts speaker prints."""
+        global torch, se_extractor, ToneColorConverter
         try:
+            # Try to import heavy dependencies only when needed
+            if torch is None:
+                import torch as _torch
+                torch = _torch
+            if se_extractor is None:
+                from openvoice import se_extractor as _se
+                se_extractor = _se
+            if ToneColorConverter is None:
+                from openvoice.api import ToneColorConverter as _api
+                ToneColorConverter = _api
+
             if not os.path.exists(self.converter_config):
-                print("⚠️ OpenVoice checkpoints not found.")
+                print("ℹ️ OpenVoice checkpoints not found. Local cloning disabled.")
                 return
 
             print(f"🎙️ Initializing Local Voice Engine on {self.device}...")

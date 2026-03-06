@@ -1,17 +1,11 @@
 import os
-import numpy as np
 from typing import List, Dict
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+import re
 
 class RAGService:
     def __init__(self):
-        print("Initializing Production RAG Service (Search Engine Mode)...")
-        # Use TF-IDF for robust, dependency-free spiritual search
-        # token_pattern updated to support Hindi (Devanagari) characters
-        self.vectorizer = TfidfVectorizer(token_pattern=r"(?u)\b[\w']+\b")
+        print("Initializing Production RAG Service (Lightweight Search Mode)...")
         self.documents = []
-        self.tfidf_matrix = None
         self.kb_loaded = False
         
         # Comprehensive English/Hinglish -> Hindi keyword mapping
@@ -136,12 +130,7 @@ class RAGService:
         try:
             print(f"Indexing {len(documents)} spiritual entries for search...")
             self.documents = documents
-            texts = [doc['content'] for doc in self.documents]
-            
-            # Create the mathematical word-frequency matrix
-            self.tfidf_matrix = self.vectorizer.fit_transform(texts)
             self.kb_loaded = True
-            
             print(f"✓ Search Index Ready: {len(self.documents)} entries indexed.")
             return True
         except Exception as e:
@@ -149,37 +138,46 @@ class RAGService:
             return False
     
     def search(self, query: str, k: int = 3) -> List[Dict]:
-        """Performs fast keyword-based semantic match."""
-        if not self.kb_loaded or self.tfidf_matrix is None:
-            # Try to load locally if search is called without init
+        """Performs fast keyword-based matching (No ML dependency)."""
+        if not self.kb_loaded:
             if not self.load_local_knowledge():
                 return []
             
         try:
             # 1. Expand query for Hinglish support
-            expanded_query = query.lower()
-            words = expanded_query.split()
-            for word in words:
+            query_clean = query.lower()
+            search_terms = set(re.findall(r"(?u)\b[\w']+\b", query_clean))
+            
+            # Map Hinglish/English to Hindi for better matching
+            words_to_add = set()
+            for word in search_terms:
                 if word in self.translation_map:
-                    expanded_query += f" {self.translation_map[word]}"
+                    words_to_add.add(self.translation_map[word])
+            search_terms.update(words_to_add)
             
-            # 2. Convert to vector
-            query_vec = self.vectorizer.transform([expanded_query])
+            # 2. Score documents based on hit count
+            scored_docs = []
+            for doc in self.documents:
+                content = doc['content'].lower()
+                score = 0
+                for term in search_terms:
+                    # Simple count-based scoring
+                    if term in content:
+                        score += 1
+                
+                if score > 0:
+                    scored_docs.append((score, doc))
             
-            # Calculate similarity scores
-            cosine_similarities = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
-            
-            # Get top K indices
-            top_k_indices = cosine_similarities.argsort()[-k:][::-1]
+            # 3. Sort by score and return top K
+            scored_docs.sort(key=lambda x: x[0], reverse=True)
             
             results = []
-            for idx in top_k_indices:
-                if cosine_similarities[idx] > 0:  # Only return if there is at least one word match
-                    results.append({
-                        'content': self.documents[idx]['content'],
-                        'metadata': self.documents[idx]['metadata'],
-                        'score': float(cosine_similarities[idx])
-                    })
+            for score, doc in scored_docs[:k]:
+                results.append({
+                    'content': doc['content'],
+                    'metadata': doc['metadata'],
+                    'score': score
+                })
             
             return results
         except Exception as e:
