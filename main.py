@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from routes.chat   import router as chat_router
 from routes.orders import router as orders_router
 from routes.avatar import router as avatar_router
+from routes.guidance import router as guidance_router
 from fastapi.staticfiles import StaticFiles
 import os
 
@@ -43,6 +44,7 @@ app.add_middleware(
 app.include_router(chat_router)
 app.include_router(orders_router)
 app.include_router(avatar_router)
+app.include_router(guidance_router)
 
 
 @app.get("/", tags=["Health"])
