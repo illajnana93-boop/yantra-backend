@@ -192,11 +192,23 @@ async def get_today_panchang(lat: float, lon: float):
     params = {"datetime": now_str, "coordinates": f"{lat},{lon}", "ayanamsa": 1}
 
     async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(
-            "https://api.prokerala.com/v2/astrology/panchang/advanced",
-            headers={"Authorization": f"Bearer {token}"},
-            params=params,
-        )
-    if resp.status_code != 200:
+        headers = {"Authorization": f"Bearer {token}"}
+        # Fetch both Advanced Panchang and current Kundli (for today's Rashi)
+        panchang_task = client.get("https://api.prokerala.com/v2/astrology/panchang/advanced", headers=headers, params=params)
+        kundli_task   = client.get("https://api.prokerala.com/v2/astrology/kundli", headers=headers, params=params)
+        
+        panchang_res, kundli_res = await asyncio.gather(panchang_task, kundli_task)
+        
+    if panchang_res.status_code != 200:
         raise HTTPException(status_code=503, detail="Panchang fetch failed")
-    return resp.json().get("data", {})
+        
+    data = panchang_res.json().get("data", {})
+    
+    # Extract Moon Sign (Rashi) from the Kundli response for the current time
+    if kundli_res.status_code == 200:
+        k_data = kundli_res.json().get("data", {})
+        moon_sign = k_data.get("nakshatra_details", {}).get("chandra_rasi", {}).get("name")
+        if moon_sign:
+            data["today_rashi"] = moon_sign
+
+    return data
