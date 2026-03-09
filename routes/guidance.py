@@ -67,3 +67,31 @@ async def get_spiritual_guidance(sign: str):
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/extended-horoscope")
+async def get_extended_horoscope(sign: str, period: str):
+    valid_signs = [
+        "aries", "taurus", "gemini", "cancer", "leo", "virgo",
+        "libra", "scorpio", "sagittarius", "capricorn", "aquarius", "pisces"
+    ]
+    valid_periods = ["weekly", "monthly", "yearly"]
+    
+    sign_lower = sign.lower()
+    period_lower = period.lower()
+    
+    if sign_lower not in valid_signs:
+        raise HTTPException(status_code=400, detail="Invalid zodiac sign")
+    if period_lower not in valid_periods:
+        raise HTTPException(status_code=400, detail="Invalid period. Choose weekly, monthly, or yearly")
+        
+    url = f"https://horoscope-app-api.vercel.app/api/v1/get-horoscope/{period_lower}?sign={sign_lower}"
+    
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            json_resp = response.json()
+            # Return the useful data fields
+            return json_resp.get("data", {})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
