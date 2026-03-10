@@ -24,10 +24,24 @@ class KundliRequest(BaseModel):
     latitude: float
     longitude: float
 
+# ── Caching System ────────────────────────────────────────────────────────────
+# Prevents exhausting credits by storing results for the same day/location
+_TOKEN_CACHE = {"token": None, "expires": 0.0}
+_PANCHANG_CACHE: dict = {} # Key: "YYYY-MM-DD:lat:lon", Value: data
+
 async def get_prokerala_token() -> str:
-    """Get OAuth token from Prokerala. Raises HTTPException on failure."""
+    """Get OAuth token from Prokerala with internal caching."""
+    import time
+    now = time.time()
+    cached_token = _TOKEN_CACHE.get("token")
+    cached_expires = _TOKEN_CACHE.get("expires", 0.0)
+
+    if cached_token and cached_expires > now + 60:
+        return str(cached_token)
+
     if not PROKERALA_CLIENT_ID or not PROKERALA_CLIENT_SECRET:
-        raise HTTPException(status_code=503, detail="Prokerala credentials not configured on server.")
+        raise HTTPException(status_code=503, detail="Prokerala credentials missing.")
+    
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
@@ -39,14 +53,17 @@ async def get_prokerala_token() -> str:
                 }
             )
         if resp.status_code == 200:
-            token = resp.json().get("access_token")
+            data = resp.json()
+            token = data.get("access_token")
+            expires_in = data.get("expires_in", 3600)
             if token:
-                return token
-        print(f"❌ Prokerala token error ({resp.status_code}): {resp.text}")
-        raise HTTPException(status_code=503, detail=f"Prokerala token failed: {resp.text}")
-    except HTTPException:
-        raise
+                _TOKEN_CACHE["token"] = str(token)
+                _TOKEN_CACHE["expires"] = now + float(expires_in)
+                return str(token)
+        
+        raise HTTPException(status_code=503, detail="Prokerala authentication failed.")
     except Exception as e:
+        if isinstance(e, HTTPException): raise
         raise HTTPException(status_code=503, detail=f"Prokerala connection failed: {str(e)}")
 
 # ── POST /generate-kundli ──────────────────────────────────────────────────────
@@ -187,6 +204,18 @@ async def get_user_kundli(user_id: str = Header(...)):
 # ── GET /today-panchang ───────────────────────────────────────────────────────
 @router.get("/today-panchang")
 async def get_today_panchang(lat: float, lon: float):
+    # Round coordinates to 0.1 degree (~11km) to increase cache hits for a city
+    r_lat, r_lon = round(lat, 1), round(lon, 1)
+    today = datetime.now().strftime("%Y-%m-%d")
+    cache_key = f"{today}:{r_lat}:{r_lon}"
+
+    # 1. Return from memory cache if available
+    if cache_key in _PANCHANG_CACHE:
+        return _PANCHANG_CACHE[cache_key]
+
+    # Clean old entries from cache (primitive GC)
+    if len(_PANCHANG_CACHE) > 100: _PANCHANG_CACHE.clear()
+
     try:
         token = await get_prokerala_token()
         now_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%S+05:30")
@@ -194,40 +223,28 @@ async def get_today_panchang(lat: float, lon: float):
 
         async with httpx.AsyncClient(timeout=15) as client:
             headers = {"Authorization": f"Bearer {token}"}
-            # Fetch both Advanced Panchang and current Kundli (for today's Rashi)
-            panchang_task = client.get("https://api.prokerala.com/v2/astrology/panchang/advanced", headers=headers, params=params)
-            kundli_task   = client.get("https://api.prokerala.com/v2/astrology/kundli", headers=headers, params=params)
+            p_t = client.get("https://api.prokerala.com/v2/astrology/panchang/advanced", headers=headers, params=params)
+            k_t = client.get("https://api.prokerala.com/v2/astrology/kundli", headers=headers, params=params)
+            p_res, k_res = await asyncio.gather(p_t, k_t)
             
-            panchang_res, kundli_res = await asyncio.gather(panchang_task, kundli_task)
+        if p_res.status_code != 200: raise Exception("API Error")
             
-        if panchang_res.status_code != 200:
-             raise Exception(f"Panchang API failed with {panchang_res.status_code}")
-            
-        data = panchang_res.json().get("data", {})
-        
-        # Extract Moon Sign (Rashi) from the Kundli response for the current time
-        if kundli_res.status_code == 200:
-            k_data = kundli_res.json().get("data", {})
-            moon_sign = k_data.get("nakshatra_details", {}).get("chandra_rasi", {}).get("name")
-            if moon_sign:
-                data["today_rashi"] = moon_sign
+        data = p_res.json().get("data", {})
+        if k_res.status_code == 200:
+            moon = k_res.json().get("data", {}).get("nakshatra_details", {}).get("chandra_rasi", {}).get("name")
+            if moon: data["today_rashi"] = moon
 
+        # 2. Save to memory cache
+        _PANCHANG_CACHE[cache_key] = data
         return data
+
     except Exception as e:
-        print(f"⚠️  Panchang Fallback triggered: {str(e)}")
-        # Graceful mock fallback so the UI never hits 503
+        print(f"⚠️ Panchang Fallback: {e}")
         return {
             "is_mock": True,
-            "sunrise": "2026-03-10T06:20:00+05:30",
-            "sunset": "2026-03-10T18:30:00+05:30",
-            "moonrise": "2026-03-10T19:45:00+05:30",
-            "moonset": "2026-03-10T07:15:00+05:30",
-            "vaara": "Tuesday",
-            "tithi": [{"name": "Ekadashi"}],
-            "nakshatra": [{"name": "Pushya"}],
-            "yoga": [{"name": "Siddha"}],
-            "karana": [{"name": "Vanija"}],
-            "today_rashi": "Dhanu",
-            "auspicious_period": [{"name": "Abhijit Muhurat", "start": "2026-03-10T11:50:00+05:30", "end": "2026-03-10T12:40:00+05:30"}],
-            "inauspicious_period": [{"name": "Rahu Kaal", "start": "2026-03-10T15:00:00+05:30", "end": "2026-03-10T16:30:00+05:30"}]
+            "sunrise": f"{today}T06:20:00+05:30",
+            "sunset": f"{today}T18:30:00+05:30",
+            "vaara": datetime.now().strftime("%A"),
+            "tithi": [{"name": "Shukla Paksha"}],
+            "today_rashi": "Dhanu"
         }
