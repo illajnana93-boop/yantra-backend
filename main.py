@@ -12,7 +12,11 @@ from routes.avatar import router as avatar_router
 from routes.guidance import router as guidance_router
 from routes.kundli import router as kundli_router
 from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
 import os
+
+# Load environment variables for local development
+load_dotenv()
 
 app = FastAPI(
     title="Sri Shyam Yantra API",
